@@ -1,15 +1,18 @@
 name: Build and Push Docker Image
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - 'Dockerfile'
-      - 'index.js'
-      - 'package.json'
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
+    inputs:
+      image_name:
+        description: 'Docker镜像名称 (默认: nodejs-hug)'
+        required: false
+        default: 'nodejs-hug'
+        type: string
+      image_tag:
+        description: 'Docker镜像标签 (默认: latest)'
+        required: false
+        default: 'latest'
+        type: string
 
 jobs:
   build:
@@ -39,7 +42,8 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/${{ github.repository_owner }}/nodejs-hug:latest
+            ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
+            ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=HTTP Server
