@@ -36,7 +36,7 @@ Telegram交流反馈群组：https://t.me/eooceu
 | PROJECT_URL | 否 | https://www.google.com | 项目分配的域名 |
 | AUTO_ACCESS | 否 | false | 是否开启自动访问保活 |
 | PORT | 否 | 3000 | HTTP服务监听端口 |
-| EXTERNAL_PORT | 是 | 7860 | Argo隧道端口和外部代理服务器端口 |
+| EXTERNAL_PORT | 否 | 7860默认 | Argo隧道端口和外部代理服务器端口 |
 | UUID | 否 | 4b3e2bfe-bde1-5def-d035-0cb572bbd046 | 用户UUID |
 | NEZHA_SERVER | 否 | - | 哪吒面板域名 |
 | NEZHA_PORT | 否 | - | 哪吒端口 |
