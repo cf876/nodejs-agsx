@@ -51,20 +51,24 @@ start_port_forward() {
     local dst_port=$2
     local forward_name=$3
     
-    # 检查socat是否安装，未安装则自动安装
-    if ! command -v socat >/dev/null 2>&1; then
-        echo "正在安装socat端口转发工具..."
-        if command -v apt >/dev/null 2>&1; then
-            apt update -y && apt install -y socat >/dev/null 2>&1
-        elif command -v yum >/dev/null 2>&1; then
-            yum install -y socat >/dev/null 2>&1
-        elif command -v dnf >/dev/null 2>&1; then
-            dnf install -y socat >/dev/null 2>&1
-        else
-            echo "警告：无法自动安装socat，端口转发功能可能无法使用"
-            return 1
-        fi
+    # 原脚本中的安装逻辑片段
+if ! command -v socat >/dev/null 2>&1; then
+    echo "正在安装socat端口转发工具..."
+    if command -v apt >/dev/null 2>&1; then
+        apt update -y && apt install -y socat >/dev/null 2>&1
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y socat >/dev/null 2>&1
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y socat >/dev/null 2>&1
+    # 新增：适配Alpine Linux的apk包管理器
+    elif command -v apk >/dev/null 2>&1; then
+        # 若为root用户直接执行，普通用户需添加sudo（sudo apk update && sudo apk add -y socat）
+        apk update >/dev/null 2>&1 && apk add -y socat >/dev/null 2>&1
+    else
+        echo "警告：无法自动安装socat，端口转发功能可能无法使用"
+        return 1
     fi
+fi
     
     # 停止已有转发进程
     stop_port_forward $forward_name
