@@ -75,7 +75,8 @@ fi
     
     # 启动新的转发进程
     echo "启动端口转发：$src_port -> $dst_port"
-    nohup socat TCP-LISTEN:$src_port,reuseaddr,fork TCP:127.0.0.1:$dst_port > $HOME/agsbx/${forward_name}_forward.log 2>&1 &
+    # 修复后（监听所有网卡，支持原始IP访问）
+    nohup socat TCP-LISTEN:$src_port,bind=0.0.0.0,reuseaddr,fork TCP:127.0.0.1:$dst_port > $HOME/agsbx/${forward_name}_forward.log 2>&1 &
     echo $! > $HOME/agsbx/${forward_name}_forward.pid
 }
 
@@ -745,7 +746,9 @@ EOF
 fi
 
 # 新增：启动vmpt端口转发到TARGET_PORT
-start_port_forward $port_vm_ws $TARGET_PORT "vmpt"
+if [ -n "$port_vm_ws" ] && [ -f "$HOME/agsbx/port_vm_ws" ]; then
+    start_port_forward $port_vm_ws $TARGET_PORT "vmpt"
+fi
 
 else
 vmp=vmptargo
@@ -1013,8 +1016,8 @@ fi
 fi
 
 # 新增：在vwpt端口初始化完成后启动转发
-if [ -n "$vwp" ] && [ -n "$port_vw" ]; then
-start_port_forward $port_vw $TARGET_PORT "vwpt"
+if [ -n "$vwp" ] && [ -n "$port_vw" ] && [ -f "$HOME/agsbx/port_vw" ]; then
+    start_port_forward $port_vw $TARGET_PORT "vwpt"
 fi
 }
 ins(){
