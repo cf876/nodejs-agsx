@@ -41,7 +41,7 @@ export warp=${warp:-''}
 export name=${name:-''}
 export oap=${oap:-''}
 # 新增：定义转发目标端口，优先使用环境变量PORT，默认3000
-export TARGET_PORT=${PORT:-''}
+export TARGET_PORT=${PORT:-3000}
 v46url="https://icanhazip.com"
 agsbxurl="https://raw.githubusercontent.com/yonggekkk/argosbx/main/argosbx.sh"
 
