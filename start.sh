@@ -1600,12 +1600,12 @@ trojan://${UUID}@${SERVER}:443?security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${AR
   # 生成二维码 url 文件
   cat > $WORK_DIR/subscribe/qr << EOF
 $(text 68):
-https://${ARGO_DOMAIN}/${UUID}/auto
+https://${DOMAIN}/${UUID}/auto
 
 $(text 66) QRcode:
-https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://${ARGO_DOMAIN}/${UUID}/auto
+https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://${DOMAIN}/${UUID}/auto
 
-$($WORK_DIR/qrencode "https://${ARGO_DOMAIN}/${UUID}/auto")
+$($WORK_DIR/qrencode "https://${DOMAIN}/${UUID}/auto")
 EOF
 
   # 生成客户端配置文件
