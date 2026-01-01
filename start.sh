@@ -1,4 +1,4 @@
-##!/bin/bash
+#!/bin/bash
 set -e
 
 echo "start start"
@@ -90,49 +90,57 @@ echo "warp start"
 MASQUE_PLUS_URL="https://cdn.jsdelivr.net/gh/masx200/singbox-nodejs-warp-xray-tunnel@main/masque-plus.zip"
 USQUE_URL="https://cdn.jsdelivr.net/gh/masx200/singbox-nodejs-warp-xray-tunnel@main/usque.zip"
 
+# 通用下载函数（适配curl/wget，无-v参数）
+download_zip() {
+  local url=$1
+  local zip_name=$2
+  local target_bin=$3
+  
+  # 仅当文件不存在时删除（避免无文件时报错）
+  if [ -f "$zip_name" ]; then
+    rm -f "$zip_name"
+  fi
+
+  echo "下载 $target_bin ..."
+  if command -v curl >/dev/null 2>&1; then
+    curl -L -sS -o "$zip_name" "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$zip_name" "$url"  # 移除-v参数，适配BusyBox
+  else
+    echo "错误：无curl/wget，无法下载 $target_bin"
+    exit 1
+  fi
+
+  unzip -o "$zip_name"
+  rm -f "$zip_name"
+  chmod +x "./$target_bin"
+  echo "$target_bin 下载并设置完成"
+}
+
 # 检查并下载 masque-plus
 if [ ! -f "./masque-plus" ]; then
-    echo "下载 masque-plus..."
-    rm masque-plus.zip || true
-    wget -v -O masque-plus.zip "$MASQUE_PLUS_URL"
-    unzip -o masque-plus.zip
-    rm masque-plus.zip
-    chmod +x ./masque-plus
-    echo "masque-plus 下载并设置完成"
+  download_zip "$MASQUE_PLUS_URL" "masque-plus.zip" "masque-plus"
 else
-    echo "masque-plus 已存在，跳过下载"
+  echo "masque-plus 已存在，跳过下载"
 fi
 
 # 检查并下载 usque
 if [ ! -f "./usque" ]; then
-    echo "下载 usque..."
-    rm usque.zip || true
-    wget  -v -O usque.zip "$USQUE_URL"
-    unzip -o usque.zip
-    rm usque.zip
-    chmod +x ./usque
-    echo "usque 下载并设置完成"
+  download_zip "$USQUE_URL" "usque.zip" "usque"
 else
-    echo "usque 已存在，跳过下载"
+  echo "usque 已存在，跳过下载"
 fi
 
-
-
+# ================== 后台运行masque-plus（避免阻塞后续逻辑）==================
+echo "启动masque-plus后台进程..."
+nohup bash -c '
 while true; do
-    
-    
-       ./masque-plus "-bind" "0.0.0.0:1080" "-username" "hp40emnw108got6a67p2isj1x65qwjtz60fh5dtl7nhjhor3va" "--password" "i7esr1nwxcil034gslw4sdzjyfejfvf5xiaagx4x286nw6l3ff"  "-sni"  "gitlab.io" "-dns" "1.1.1.1,8.8.8.8,94.140.14.140" "-scan" "-4"                "-range4"                   "162.159.199.2/32"
-    
-    
-    
-    sleep 10
-    
-    ./masque-plus "-bind" "0.0.0.0:1080" "-username" "hp40emnw108got6a67p2isj1x65qwjtz60fh5dtl7nhjhor3va" "--password" "i7esr1nwxcil034gslw4sdzjyfejfvf5xiaagx4x286nw6l3ff"  "-sni"  "gitlab.io" "-dns" "1.1.1.1,8.8.8.8,94.140.14.140" "-scan" "-4"                "-range4"                   "162.159.198.2/32"
-    
-    
-    
-    sleep 10
+  ./masque-plus "-bind" "0.0.0.0:1080" "-username" "hp40emnw108got6a67p2isj1x65qwjtz60fh5dtl7nhjhor3va" "--password" "i7esr1nwxcil034gslw4sdzjyfejfvf5xiaagx4x286nw6l3ff"  "-sni"  "gitlab.io" "-dns" "1.1.1.1,8.8.8.8,94.140.14.140" "-scan" "-4" "-range4" "162.159.199.2/32"
+  sleep 10
+  ./masque-plus "-bind" "0.0.0.0:1080" "-username" "hp40emnw108got6a67p2isj1x65qwjtz60fh5dtl7nhjhor3va" "--password" "i7esr1nwxcil034gslw4sdzjyfejfvf5xiaagx4x286nw6l3ff"  "-sni"  "gitlab.io" "-dns" "1.1.1.1,8.8.8.8,94.140.14.140" "-scan" "-4" "-range4" "162.159.198.2/32"
+  sleep 10
 done
+' > /dev/null 2>&1 &
 
 # ================== 固定 Reality 密钥 ==================
 KEY_FILE="${FILE_PATH}/key.txt"
@@ -186,8 +194,6 @@ EOF
   echo -e "\e[1;32m[证书] 证书已生成\e[0m"
 
   # ================== 计算 pinSHA256 ==================
-  # ================== 计算 pinSHA256 ==================
-  # Hysteria2 需要整个证书的 SHA256，而不仅仅是公钥
   PINSHA256=$(openssl x509 -in "${FILE_PATH}/cert.pem" -outform DER 2>/dev/null | openssl dgst -sha256 -hex 2>/dev/null | awk '{print $2}')
   echo -e "\e[1;36m[证书] pinSHA256: ${PINSHA256}\e[0m"
 fi
@@ -195,8 +201,6 @@ fi
 # ================== 生成 config.json ==================
 cat > "${FILE_PATH}/config.json" <<EOF
 {
-
-
   "log": { "disabled": false ,"level": "info"},
   "inbounds": [$( \
     [ "$TUIC_PORT" != "" ] && [ "$TUIC_PORT" != "0" ] && echo "{
@@ -233,12 +237,8 @@ cat > "${FILE_PATH}/config.json" <<EOF
     }"; \
   )],
   "outbounds": [
-  
-  {"type": "direct"},
-  
-  
-  
-   {
+    {"type": "direct"},
+    {
       "type": "socks",
       "tag": "warp-PROXY",
       "server": "127.0.0.1",
@@ -247,10 +247,8 @@ cat > "${FILE_PATH}/config.json" <<EOF
       "username": "hp40emnw108got6a67p2isj1x65qwjtz60fh5dtl7nhjhor3va",
       "password": "i7esr1nwxcil034gslw4sdzjyfejfvf5xiaagx4x286nw6l3ff"
     }
-
-
   ],
-   "route": {
+  "route": {
     "rules": [
       {
         "domain": [".*"],
@@ -277,9 +275,7 @@ ISP=$(curl -s --max-time 2 https://speed.cloudflare.com/meta | awk -F'"' '{print
 
 # ================== 生成订阅 ==================
 # 重新计算 pinSHA256（如果证书已存在，从现有证书计算；如果刚生成，重新计算）
- # ================== 计算 pinSHA256 ==================
-  # Hysteria2 需要整个证书的 SHA256，而不仅仅是公钥
-  PINSHA256=$(openssl x509 -in "${FILE_PATH}/cert.pem" -outform DER 2>/dev/null | openssl dgst -sha256 -hex 2>/dev/null | awk '{print $2}')
+PINSHA256=$(openssl x509 -in "${FILE_PATH}/cert.pem" -outform DER 2>/dev/null | openssl dgst -sha256 -hex 2>/dev/null | awk '{print $2}')
 
 > "${FILE_PATH}/list.txt"
 [ "$TUIC_PORT" != "" ] && [ "$TUIC_PORT" != "0" ] && echo "tuic://${UUID}:admin@${IP}:${TUIC_PORT}?sni=www.bing.com&alpn=h3&congestion_control=bbr&allowInsecure=1#TUIC-${ISP}" >> "${FILE_PATH}/list.txt"
@@ -303,7 +299,7 @@ schedule_restart() {
     D=$(( beijing_ts / 86400 ))
 
     # ---- 时间匹配 → 重启 sing-box ----
-    if [ "$H" -eq 00 ] && [ "$M" -eq 03 ] && [ "$D" -ne "$LAST_RESTART_DAY" ]; then
+    if [ "$H" -eq 0 ] && [ "$M" -eq 3 ] && [ "$D" -ne "$LAST_RESTART_DAY" ]; then
       echo "[定时重启:Sing-box] 到达 00:03 → 重启 sing-box"
       LAST_RESTART_DAY=$D
 
