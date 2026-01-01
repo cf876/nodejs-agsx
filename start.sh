@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -e
 
 # ================== 基础配置 ==================
 ARGO_TOKEN=""
@@ -20,11 +20,11 @@ CF_DOMAINS=(
 install_deps() {
     echo "[1/6] 安装基础依赖..."
     if command -v apk >/dev/null 2>&1; then
-        apk add --no-cache openssl curl nodejs >/dev/null 2>&1 || true
+        apk add --no-cache openssl curl >/dev/null 2>&1
     elif command -v apt >/dev/null 2>&1; then
-        apt update >/dev/null 2>&1 && apt install -y openssl curl nodejs >/dev/null 2>&1 || true
+        apt update >/dev/null 2>&1 && apt install -y openssl curl >/dev/null 2>&1
     elif command -v yum >/dev/null 2>&1; then
-        yum install -y openssl curl nodejs >/dev/null 2>&1 || true
+        yum install -y openssl curl >/dev/null 2>&1
     fi
     echo "[1/6] 依赖安装完成"
 }
@@ -34,15 +34,14 @@ get_base_info() {
     echo "[2/6] 获取基础信息..."
     
     # 工作目录
-    mkdir -p "$(dirname "$0")/.npm"
     cd "$(dirname "$0")"
     export FILE_PATH="${PWD}/.npm"
     rm -rf "$FILE_PATH" && mkdir -p "$FILE_PATH"
     
     # 公网IP
-    PUBLIC_IP=$(curl -s --max-time 5 ipv4.ip.sb || curl -s --max-time 5 api.ipify.org || echo "127.0.0.1")
-    if [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "127.0.0.1" ]; then
-        echo "[警告] 无法获取公网IP，使用本地回环地址"
+    PUBLIC_IP=$(curl -s --max-time 5 ipv4.ip.sb || curl -s --max-time 5 api.ipify.org)
+    if [ -z "$PUBLIC_IP" ]; then
+        echo "[错误] 无法获取公网IP" && exit 1
     fi
     
     # CF优选域名
@@ -56,35 +55,25 @@ get_base_info() {
     BEST_CF_DOMAIN=$(select_cf_domain)
     
     # 端口配置
-    if [ -n "${SERVER_PORT:-}" ]; then
-        PORTS_STRING="$SERVER_PORT"
-    else
-        PORTS_STRING="7860"
-    fi
+    [ -n "$SERVER_PORT" ] && PORTS_STRING="$SERVER_PORT" || PORTS_STRING="7860"
     read -ra AVAILABLE_PORTS <<< "$PORTS_STRING"
-    
-    PUBLIC_PORT=""
-    TUIC_PORT=""
-    HY2_PORT=""
-    REALITY_PORT=""
-    ARGO_PORT=8081
-    HTTP_PORT=""
-    
     if [ ${#AVAILABLE_PORTS[@]} -eq 1 ]; then
         PUBLIC_PORT=${AVAILABLE_PORTS[0]}
         TUIC_PORT=""
         HY2_PORT=$PUBLIC_PORT
         REALITY_PORT=$PUBLIC_PORT
+        ARGO_PORT=8081
         HTTP_PORT=$HTTP_LOCAL_PORT
     else
         TUIC_PORT=${AVAILABLE_PORTS[0]}
         HY2_PORT=${AVAILABLE_PORTS[1]}
         REALITY_PORT=${AVAILABLE_PORTS[0]}
         HTTP_PORT=${AVAILABLE_PORTS[1]}
+        ARGO_PORT=8081
     fi
     
     # UUID
-    UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen 2>/dev/null || echo "fcef5ce2-116d-4929-97e9-b71989c46ff4")
+    UUID=$(cat /proc/sys/kernel/random/uuid)
     echo "$UUID" > "${FILE_PATH}/uuid.txt"
     
     echo "[2/6] 基础信息获取完成"
@@ -98,27 +87,20 @@ generate_keys() {
     
     # 下载sing-box和cloudflared
     ARCH=$(uname -m)
-    [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]] && BASE_URL="https://arm64.ssss.nyc.mn" || BASE_URL="https://amd64.ssss.nyc.mn"
-    [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]] && ARGO_ARCH="arm64" || ARGO_ARCH="amd64"
+    [[ "$ARCH" == "aarch64" ]] && BASE_URL="https://arm64.ssss.nyc.mn" || BASE_URL="https://amd64.ssss.nyc.mn"
+    [[ "$ARCH" == "aarch64" ]] && ARGO_ARCH="arm64" || ARGO_ARCH="amd64"
     
-    # 创建目录并下载二进制文件（添加错误处理）
-    mkdir -p "${FILE_PATH}"
-    curl -L -sS --max-time 60 -o "${FILE_PATH}/sb" "${BASE_URL}/sb" && chmod +x "${FILE_PATH}/sb" >/dev/null 2>&1 || {
-        echo "[错误] 下载sing-box失败"
-        exit 0
-    }
-    curl -L -sS --max-time 60 -o "${FILE_PATH}/cloudflared" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARGO_ARCH}" && chmod +x "${FILE_PATH}/cloudflared" >/dev/null 2>&1 || {
-        echo "[错误] 下载cloudflared失败"
-        exit 0
-    }
+    # 下载二进制文件（静默）
+    curl -L -sS --max-time 60 -o "${FILE_PATH}/sb" "${BASE_URL}/sb" && chmod +x "${FILE_PATH}/sb" >/dev/null 2>&1
+    curl -L -sS --max-time 60 -o "${FILE_PATH}/cloudflared" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARGO_ARCH}" && chmod +x "${FILE_PATH}/cloudflared" >/dev/null 2>&1
     
     # 生成Reality密钥
-    KEY_OUTPUT=$("${FILE_PATH}/sb" generate reality-keypair 2>/dev/null)
+    KEY_OUTPUT=$("${FILE_PATH}/sb" generate reality-keypair)
     private_key=$(echo "$KEY_OUTPUT" | awk '/PrivateKey:/ {print $2}')
     public_key=$(echo "$KEY_OUTPUT" | awk '/PublicKey:/ {print $2}')
     
     # 生成证书（静默）
-    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -keyout "${FILE_PATH}/private.key" -out "${FILE_PATH}/cert.pem" -days 3650 -subj "/CN=www.bing.com" >/dev/null 2>&1 || true
+    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -keyout "${FILE_PATH}/private.key" -out "${FILE_PATH}/cert.pem" -days 3650 -subj "/CN=www.bing.com" >/dev/null 2>&1
     
     echo "[3/6] 密钥和证书生成完成"
 }
@@ -201,16 +183,12 @@ const fs = require('fs');
 http.createServer((req, res) => {
     if (req.url.includes('/sub')) {
         res.writeHead(200, {'Content-Type': 'text/plain; charset=utf-8'});
-        try {
-            res.end(fs.readFileSync('${FILE_PATH}/sub.txt', 'utf8'));
-        } catch (e) {
-            res.end('');
-        }
+        res.end(fs.readFileSync('${FILE_PATH}/sub.txt', 'utf8'));
     } else {
         res.writeHead(404);
         res.end('404');
     }
-}).listen(${HTTP_PORT}, '0.0.0.0');
+}).listen(${HTTP_PORT}, '127.0.0.1');
 JSEOF
     nohup node "${FILE_PATH}/server.js" >/dev/null 2>&1 &
     HTTP_PID=$!
@@ -228,11 +206,6 @@ JSEOF
         [ -n "$ARGO_DOMAIN" ] && break
     done
     rm -f "$ARGO_LOG"  # 删除临时日志
-    
-    # 保存PID信息
-    echo "$SB_PID" > "${FILE_PATH}/sb.pid"
-    echo "$HTTP_PID" > "${FILE_PATH}/http.pid"
-    echo "$ARGO_PID" > "${FILE_PATH}/argo.pid"
     
     echo "[5/6] 服务启动完成"
     echo "      sing-box PID: $SB_PID"
@@ -278,15 +251,10 @@ generate_nodes() {
 monitor_process() {
     while true; do
         # 检查sing-box
-        if [ -f "${FILE_PATH}/sb.pid" ]; then
-            SB_PID=$(cat "${FILE_PATH}/sb.pid")
-            if ! kill -0 $SB_PID 2>/dev/null; then
-                echo "[监控] sing-box 异常退出，自动重启..."
-                nohup "${FILE_PATH}/sb" run -c "${FILE_PATH}/config.json" >/dev/null 2>&1 &
-                NEW_SB_PID=$!
-                echo "$NEW_SB_PID" > "${FILE_PATH}/sb.pid"
-                SB_PID=$NEW_SB_PID
-            fi
+        if ! kill -0 $SB_PID 2>/dev/null; then
+            echo "[监控] sing-box 异常退出，自动重启..."
+            nohup "${FILE_PATH}/sb" run -c "${FILE_PATH}/config.json" >/dev/null 2>&1 &
+            SB_PID=$!
         fi
         sleep 10
     done
@@ -299,9 +267,6 @@ main() {
     echo "          单端口多协议服务启动脚本"
     echo "================================================"
     
-    # 捕获退出信号
-    trap 'echo "脚本正常退出"; exit 0' SIGINT SIGTERM EXIT
-    
     install_deps
     get_base_info
     generate_keys
@@ -311,14 +276,15 @@ main() {
     
     # 启动后台监控（可选，注释掉则关闭）
     monitor_process >/dev/null 2>&1 &
-    MONITOR_PID=$!
-    echo "$MONITOR_PID" > "${FILE_PATH}/monitor.pid"
     
-    # 保持脚本运行（容器友好方式）
-    echo "服务已启动，保持运行中..."
+    # 保持脚本运行
+    # 关键修复：将 wait $SB_PID 替换为无限循环，避免wait返回非0码
     while true; do
         sleep 3600
     done
+    
+    # 终极保障：强制返回0（即使上面的循环被意外退出）
+    exit 0
 }
 
 # 执行主程序
