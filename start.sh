@@ -8,6 +8,9 @@ ARGO_TOKEN=""
 # 单端口模式 UDP 协议选择: hy2 (默认) 或 tuic
 SINGLE_PORT_UDP="hy2"
 
+# HTTP 订阅服务本地端口（避免占用公网端口）
+HTTP_LOCAL_PORT=8082
+
 # ================== CF 优选域名列表 ==================
 CF_DOMAINS=(
     "cf.090227.xyz"
@@ -88,20 +91,16 @@ PORT_COUNT=${#AVAILABLE_PORTS[@]}
 [ $PORT_COUNT -eq 0 ] && echo "[错误] 未找到端口" && exit 1
 echo "[端口] 发现 $PORT_COUNT 个: ${AVAILABLE_PORTS[*]}"
 
-# ================== 端口分配逻辑【核心修改】==================
-# 单端口模式：公网端口同时承载 UDP(HY2/TUIC) + TCP(Reality)
-# Argo WS 使用本地回环端口 8081，不占用公网端口
+# ================== 端口分配逻辑【核心修复】==================
 if [ $PORT_COUNT -eq 1 ]; then
-    # 公网单端口：UDP 和 TCP 共用
+    # 单端口模式：公网端口仅给 sing-box (UDP+TCP)，HTTP 用独立本地端口
     PUBLIC_PORT=${AVAILABLE_PORTS[0]}
     TUIC_PORT=""
     HY2_PORT=""
     [[ "$SINGLE_PORT_UDP" == "tuic" ]] && TUIC_PORT=$PUBLIC_PORT || HY2_PORT=$PUBLIC_PORT
     REALITY_PORT=$PUBLIC_PORT  # Reality(TCP) 与 UDP 共用公网端口
-    # Argo WS 本地端口（固定 8081，不占用公网端口）
-    ARGO_PORT=8081
-    # HTTP 订阅服务与公网端口共用（TCP）
-    HTTP_PORT=$PUBLIC_PORT
+    ARGO_PORT=8081             # Argo WS 本地端口
+    HTTP_PORT=$HTTP_LOCAL_PORT # HTTP 订阅服务本地端口（不占用公网）
     SINGLE_PORT_MODE=true
 else
     # 多端口模式：保持原有逻辑
@@ -116,6 +115,7 @@ fi
 # ================== UUID ==================
 UUID_FILE="${FILE_PATH}/uuid.txt"
 [ -f "$UUID_FILE" ] && UUID=$(cat "$UUID_FILE") || { UUID=$(cat /proc/sys/kernel/random/uuid); echo "$UUID" > "$UUID_FILE"; }
+echo "[UUID] $UUID"
 
 # ================== 架构检测 & 下载 ==================
 ARCH=$(uname -m)
@@ -137,7 +137,6 @@ download_file "${BASE_URL}/sb" "$SB_FILE"
 download_file "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARGO_ARCH}" "$ARGO_FILE"
 
 # ================== Reality 密钥【强制生成】==================
-# 单端口模式下也需要 Reality 密钥，因此强制生成
 echo "[密钥] 生成 Reality 密钥..."
 KEY_FILE="${FILE_PATH}/key.txt"
 if [ -f "$KEY_FILE" ]; then
@@ -153,13 +152,11 @@ echo "[密钥] 已就绪"
 
 # ================== 证书生成 ==================
 echo "[证书] 生成中..."
-# 优先使用 OpenSSL 生成标准证书
 if command -v openssl >/dev/null 2>&1; then
     openssl req -x509 -newkey rsa:2048 -nodes -sha256 -keyout "${FILE_PATH}/private.key" -out "${FILE_PATH}/cert.pem" -days 3650 -subj "/CN=www.bing.com" >/dev/null 2>&1
 else
-    # 备用
+    # 备用证书
     printf -- "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIM4792SEtPqIt1ywqTd/0bYidBqpYV/+siNnfBYsdUYsoAoGCCqGSM49\nAwEHoUQDQgAE1kHafPj07rJG+HboH2ekAI4r+e6TL38GWASAnngZreoQDF16ARa/\nTsyLyFoPkhTxSbehH/OBEjHtSZGaDhMqQ==\n-----END EC PRIVATE KEY-----\n" > "${FILE_PATH}/private.key"
-
     printf -- "-----BEGIN CERTIFICATE-----\nMIIBejCCASGgAwIBAgIUFWeQL3556PNJLp/veCFxGNj9crkwCgYIKoZIzj0EAwIw\nEzERMA8GA1UEAwwIYmluZy5jb20wHhcNMjUwMTAxMDEwMTAwWhcNMzUwMTAxMDEw\nMTAwWjATMREwDwYDVQQDDAhiaW5nLmNvbTBZMBMGByqGSM49AgEGCCqGSM49AwEH\nA0IABNZB2nz49O6yRvh26B9npACOK/nuky9/BlgEgJ54Ga3qEAxdegEWv07Mi8ha\nD5IU8Um3oR/zgRIx7UmRmg4TKkOjUzBRMB0GA1UdDgQWBBTV1cFID7UISE7PLTBR\nBfGbgrkMNzAfBgNVHSMEGDAWgBTV1cFID7UISE7PLTBRBfGbgrkMNzAPBgNVHRMB\nAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIARDAJvg0vd/ytrQVvEcSm6XTlB+\neQ6OFb9LbLYL9Zi+AiB+foMbi4y/0YUQlTtz7as9S8/lciBF5VCUoVIKS+vX2g==\n-----END CERTIFICATE-----\n" > "${FILE_PATH}/cert.pem"
 fi
 echo "[证书] 已就绪"
@@ -168,61 +165,8 @@ echo "[证书] 已就绪"
 ISP=$(curl -s --max-time 2 https://speed.cloudflare.com/meta 2>/dev/null | awk -F'"' '{print $26"-"$18}' | sed 's/-$//' || echo "Node")
 [ -z "$ISP" ] && ISP="Node"
 
-# ================== 生成订阅 ==================
-generate_sub() {
-    local argo_domain="$1"
-    > "${FILE_PATH}/list.txt"
-    
-    # TUIC (UDP)
-    [ -n "$TUIC_PORT" ] && echo "tuic://${UUID}:admin@${PUBLIC_IP}:${TUIC_PORT}?sni=www.bing.com&alpn=h3&congestion_control=bbr&allowInsecure=1#TUIC-${ISP}" >> "${FILE_PATH}/list.txt"
-    
-    # HY2 (UDP)
-    [ -n "$HY2_PORT" ] && echo "hysteria2://${UUID}@${PUBLIC_IP}:${HY2_PORT}/?sni=www.bing.com&insecure=1#Hysteria2-${ISP}" >> "${FILE_PATH}/list.txt"
-    
-    # Reality (TCP) - 单端口模式下已启用
-    [ -n "$REALITY_PORT" ] && echo "vless://${UUID}@${PUBLIC_IP}:${REALITY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${public_key}&type=tcp#Reality-${ISP}" >> "${FILE_PATH}/list.txt"
-    
-    # Argo VLESS - 始终启用
-    [ -n "$argo_domain" ] && echo "vless://${UUID}@${BEST_CF_DOMAIN}:443?encryption=none&security=tls&sni=${argo_domain}&type=ws&host=${argo_domain}&path=%2F${UUID}-vless#Argo-${ISP}" >> "${FILE_PATH}/list.txt"
-
-    cat "${FILE_PATH}/list.txt" > "${FILE_PATH}/sub.txt"
-    echo ""
-    echo "==================================================="
-    echo "【直接打印 - 节点信息完整列表】"
-    echo "==================================================="
-    if [ -s "${FILE_PATH}/list.txt" ]; then
-        cat "${FILE_PATH}/list.txt"
-    else
-        echo "暂无可用节点信息"
-    fi
-    echo "==================================================="
-    echo ""
-}
-
-# ================== HTTP 服务器脚本 ==================
-cat > "${FILE_PATH}/server.js" <<JSEOF
-const http = require('http');
-const fs = require('fs');
-const port = process.argv[2] || 8080;
-const bind = process.argv[3] || '0.0.0.0';
-http.createServer((req, res) => {
-    if (req.url.includes('/sub') || req.url.includes('/${UUID}')) {
-        res.writeHead(200, {'Content-Type': 'text/plain; charset=utf-8'});
-        try { res.end(fs.readFileSync('${FILE_PATH}/sub.txt', 'utf8')); } catch(e) { res.end('error'); }
-    } else { res.writeHead(404); res.end('404'); }
-}).listen(port, bind, () => console.log('HTTP on ' + bind + ':' + port));
-JSEOF
-
-# ================== 启动 HTTP 订阅服务 ==================
-echo "[HTTP] 启动订阅服务 (端口 $HTTP_PORT)..."
-node "${FILE_PATH}/server.js" $HTTP_PORT 0.0.0.0 &
-HTTP_PID=$!
-sleep 1
-echo "[HTTP] 订阅服务已启动"
-
-# ================== 生成 sing-box 配置 ==================
+# ================== 生成 sing-box 配置【提前生成】==================
 echo "[CONFIG] 生成配置..."
-
 INBOUNDS=""
 
 # TUIC (UDP)
@@ -261,7 +205,7 @@ if [ -n "$HY2_PORT" ]; then
     }"
 fi
 
-# VLESS Reality (TCP) - 单端口模式下已启用
+# VLESS Reality (TCP)
 if [ -n "$REALITY_PORT" ]; then
     [ -n "$INBOUNDS" ] && INBOUNDS="${INBOUNDS},"
     INBOUNDS="${INBOUNDS}{
@@ -283,7 +227,7 @@ if [ -n "$REALITY_PORT" ]; then
     }"
 fi
 
-# VLESS for Argo (本地回环端口)
+# VLESS for Argo
 INBOUNDS="${INBOUNDS},"
 INBOUNDS="${INBOUNDS}{
     \"type\": \"vless\",
@@ -306,7 +250,7 @@ cat > "${FILE_PATH}/config.json" <<CFGEOF
 CFGEOF
 echo "[CONFIG] 配置已生成"
 
-# ================== 启动 sing-box ==================
+# ================== 启动 sing-box【优先启动，占用公网端口】==================
 echo "[SING-BOX] 启动中..."
 "$SB_FILE" run -c "${FILE_PATH}/config.json" &
 SB_PID=$!
@@ -320,7 +264,27 @@ if ! kill -0 $SB_PID 2>/dev/null; then
 fi
 echo "[SING-BOX] 已启动 PID: $SB_PID"
 
-# ================== Argo 隧道 ==================
+# ================== HTTP 服务器脚本 + 启动【后启动，用本地端口】==================
+cat > "${FILE_PATH}/server.js" <<JSEOF
+const http = require('http');
+const fs = require('fs');
+const port = process.argv[2] || 8080;
+const bind = process.argv[3] || '127.0.0.1'; // 仅监听本地回环，不占用公网
+http.createServer((req, res) => {
+    if (req.url.includes('/sub') || req.url.includes('/${UUID}')) {
+        res.writeHead(200, {'Content-Type': 'text/plain; charset=utf-8'});
+        try { res.end(fs.readFileSync('${FILE_PATH}/sub.txt', 'utf8')); } catch(e) { res.end('error'); }
+    } else { res.writeHead(404); res.end('404'); }
+}).listen(port, bind, () => console.log('HTTP on ' + bind + ':' + port));
+JSEOF
+
+echo "[HTTP] 启动订阅服务 (本地端口 $HTTP_PORT)..."
+node "${FILE_PATH}/server.js" $HTTP_PORT 127.0.0.1 &
+HTTP_PID=$!
+sleep 1
+echo "[HTTP] 订阅服务已启动 (仅本地可访问)"
+
+# ================== 启动 Argo 隧道 ==================
 ARGO_LOG="${FILE_PATH}/argo.log"
 ARGO_DOMAIN=""
 
@@ -336,10 +300,50 @@ done
 [ -n "$ARGO_DOMAIN" ] && echo "[Argo] 域名: $ARGO_DOMAIN" || echo "[Argo] 获取域名失败"
 
 # ================== 生成订阅 ==================
+generate_sub() {
+    local argo_domain="$1"
+    > "${FILE_PATH}/list.txt"
+    
+    # TUIC (UDP)
+    [ -n "$TUIC_PORT" ] && echo "tuic://${UUID}:admin@${PUBLIC_IP}:${TUIC_PORT}?sni=www.bing.com&alpn=h3&congestion_control=bbr&allowInsecure=1#TUIC-${ISP}" >> "${FILE_PATH}/list.txt"
+    
+    # HY2 (UDP)
+    [ -n "$HY2_PORT" ] && echo "hysteria2://${UUID}@${PUBLIC_IP}:${HY2_PORT}/?sni=www.bing.com&insecure=1#Hysteria2-${ISP}" >> "${FILE_PATH}/list.txt"
+    
+    # Reality (TCP)
+    [ -n "$REALITY_PORT" ] && echo "vless://${UUID}@${PUBLIC_IP}:${REALITY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${public_key}&type=tcp#Reality-${ISP}" >> "${FILE_PATH}/list.txt"
+    
+    # Argo VLESS
+    [ -n "$argo_domain" ] && echo "vless://${UUID}@${BEST_CF_DOMAIN}:443?encryption=none&security=tls&sni=${argo_domain}&type=ws&host=${argo_domain}&path=%2F${UUID}-vless#Argo-${ISP}" >> "${FILE_PATH}/list.txt"
+
+    cat "${FILE_PATH}/list.txt" > "${FILE_PATH}/sub.txt"
+    echo ""
+    echo "==================================================="
+    echo "【直接打印 - 节点信息完整列表】"
+    echo "==================================================="
+    if [ -s "${FILE_PATH}/list.txt" ]; then
+        cat "${FILE_PATH}/list.txt"
+    else
+        echo "暂无可用节点信息"
+    fi
+    echo "==================================================="
+    echo ""
+}
+
+# 生成订阅文件
 generate_sub "$ARGO_DOMAIN"
 
 # ================== 确定订阅链接 ==================
-SUB_URL="http://${PUBLIC_IP}:${HTTP_PORT}/sub"
+# 单端口模式下，订阅链接通过 Argo 隧道对外提供（避免公网端口冲突）
+if [ "$SINGLE_PORT_MODE" = true ]; then
+    if [ -n "$ARGO_DOMAIN" ]; then
+        SUB_URL="http://${ARGO_DOMAIN}/sub"
+    else
+        SUB_URL="http://${PUBLIC_IP}:${HTTP_LOCAL_PORT}/sub (仅本地可访问)"
+    fi
+else
+    SUB_URL="http://${PUBLIC_IP}:${HTTP_PORT}/sub"
+fi
 
 # ================== 输出结果 ==================
 echo ""
@@ -348,6 +352,7 @@ if [ "$SINGLE_PORT_MODE" = true ]; then
     echo "模式: 单端口多协议 (${SINGLE_PORT_UDP^^} + Reality + Argo)"
     echo ""
     echo "公网端口: ${PUBLIC_PORT} (UDP/TCP 共用)"
+    echo "本地端口: HTTP订阅=${HTTP_LOCAL_PORT} | Argo本地=${ARGO_PORT}"
     echo "代理节点:"
     [ -n "$HY2_PORT" ] && echo "  - HY2 (UDP): ${PUBLIC_IP}:${HY2_PORT}"
     [ -n "$TUIC_PORT" ] && echo "  - TUIC (UDP): ${PUBLIC_IP}:${TUIC_PORT}"
