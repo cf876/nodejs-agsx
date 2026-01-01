@@ -47,7 +47,7 @@ BEST_CF_DOMAIN=$(select_random_cf_domain)
 echo "[CF优选] $BEST_CF_DOMAIN"
 
 # ================== 获取端口 ==================
-[ -n "$SERVER_PORT" ] && PORTS_STRING="$SERVER_PORT" || PORTS_STRING=""
+[ -n "$SERVER_PORT" ] && PORTS_STRING="$SERVER_PORT" || PORTS_STRING="7860"
 read -ra AVAILABLE_PORTS <<< "$PORTS_STRING"
 PORT_COUNT=${#AVAILABLE_PORTS[@]}
 [ $PORT_COUNT -eq 0 ] && echo "[错误] 未找到端口" && exit 1
@@ -147,6 +147,17 @@ generate_sub() {
     [ -n "$argo_domain" ] && echo "vless://${UUID}@${BEST_CF_DOMAIN}:443?encryption=none&security=tls&sni=${argo_domain}&type=ws&host=${argo_domain}&path=%2F${UUID}-vless#Argo-${ISP}" >> "${FILE_PATH}/list.txt"
 
     cat "${FILE_PATH}/list.txt" > "${FILE_PATH}/sub.txt"
+echo ""
+    echo "==================================================="
+    echo "【直接打印 - 节点信息完整列表】"
+    echo "==================================================="
+    if [ -s "${FILE_PATH}/list.txt" ]; then
+        cat "${FILE_PATH}/list.txt"
+    else
+        echo "暂无可用节点信息"
+    fi
+    echo "==================================================="
+    echo ""
 }
 
 # ================== HTTP 服务器脚本 ==================
