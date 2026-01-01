@@ -1,5 +1,7 @@
 #!/bin/bash
 set -e
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+echo "nameserver 8.8.4.4" >> /etc/resolv.conf
 
 # ================== 配置区域 ==================
 # 固定隧道填写token，不填默认为临时隧道
